@@ -1,0 +1,771 @@
+---
+title: "NOLO Analyses"
+output: html_document
+date: "04-07-2026"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r Packages}
+library(haven)
+library(MASS)     
+library(dplyr)    
+library(car)    
+library(srvyr)
+library(pscl) 
+library(brant)
+library(tidyr)
+library(survey)
+library(openxlsx)
+```
+```{r Import Data}
+NOLO_DATA <- read_sav("NOLO_DATA.sav")
+```
+
+#Score Variables
+```{r Treatment}
+# Treatment flag (1 = Treatment, 0 = Control)
+NOLO_DATA$treatment_flag <- ifelse(
+  NOLO_DATA$video_treat_group == 2, 1,   
+  ifelse(NOLO_DATA$video_treat_group == 1, 0, NA)  
+)
+
+# Factor version
+NOLO_DATA$treatment_group <- factor(
+  NOLO_DATA$treatment_flag,
+  levels = c(0, 1),
+  labels = c("Control", "Treatment")
+)
+
+# Set reference
+NOLO_DATA$treatment_group <- relevel(NOLO_DATA$treatment_group, ref = "Control")
+
+```
+```{r Desire outcomes}
+# Desire to drink alcohol
+NOLO_DATA$desire_drink_alc_ord <- factor(
+  NOLO_DATA$desire_drink_alc,
+  ordered = TRUE,
+  levels = c(1, 2, 3, 4, 5)
+)
+
+# Desire to drink NABs
+NOLO_DATA$desire_drink_NABs_ord <- factor(
+  NOLO_DATA$desire_drink_NABs,
+  ordered = TRUE,
+  levels = c(1, 2, 3, 4, 5))
+
+# Lifetime NAB use 
+NOLO_DATA$lifetime_NAB_use_recode <- ifelse(
+  NOLO_DATA$lifetime_NAB_use == 1, 1,
+  ifelse(NOLO_DATA$lifetime_NAB_use == 2, 0, NA)
+)
+
+```
+```{r Expectancies}
+#Positive expectancy score
+NOLO_DATA$positive_expectancy_score <- rowMeans(
+  NOLO_DATA[, c(
+    "positive_expectancies_grid_a",  
+    "positive_expectancies_grid_b",  
+    "positive_expectancies_grid_c",  
+    "positive_expectancies_grid_d"   
+  )],
+  na.rm = TRUE
+)
+
+#Negative expectancy score
+NOLO_DATA$negative_expectancy_score <- rowMeans(
+  NOLO_DATA[, c(
+    "negative_expectancies_grid_a",  
+    "negative_expectancies_grid_b",  
+    "negative_expectancies_grid_c",  
+    "negative_expectancies_grid_d"  
+  )],
+  na.rm = TRUE
+)
+
+#Binary scale scores
+NOLO_DATA$positive_expectancy_binary_score <- ifelse(
+  NOLO_DATA$positive_expectancy_score >= 3, 1, 0
+)
+
+NOLO_DATA$positive_expectancy_binary_score <- as_factor(NOLO_DATA$positive_expectancy_binary_score)
+
+NOLO_DATA$negative_expectancy_binary_score <- ifelse(
+  NOLO_DATA$negative_expectancy_score >= 3, 1, 0
+)
+```
+```{r Susceptibility}
+# drink if offered
+NOLO_DATA$drink_if_offered_recode <- ifelse(
+  NOLO_DATA$susceptibility_to_use_friend_offer == 1, 0, 1
+)
+
+# drink next month
+NOLO_DATA$drink_next_month_recode <- ifelse(
+  NOLO_DATA$susceptibility_to_use_next_month == 1, 0, 1
+)
+
+# curiosity
+NOLO_DATA$curiosity_recode <- ifelse(
+  NOLO_DATA$susceptibility_to_use_curiosity == 4, 0,
+  ifelse(NOLO_DATA$susceptibility_to_use_curiosity %in% c(1, 2, 3), 1, NA)
+)
+
+# composite susceptibility
+NOLO_DATA$susceptibility_recode <- ifelse(
+  NOLO_DATA$drink_if_offered_recode == 0 &
+    NOLO_DATA$drink_next_month_recode == 0 &
+    NOLO_DATA$curiosity_recode == 0,
+  0, 1
+)
+
+```
+```{r Covariates}
+#Gender
+NOLO_DATA$gender_recode <- NA
+NOLO_DATA$gender_recode[NOLO_DATA$gender4 == 2] <- 0  
+NOLO_DATA$gender_recode[NOLO_DATA$gender4 == 1] <- 1   
+NOLO_DATA$gender_recode[NOLO_DATA$gender4 %in% c(3, 4)] <- 2   
+
+#Age
+NOLO_DATA$age_recode <- ifelse(NOLO_DATA$birthyr >= 2005, "Underage", "21+")
+NOLO_DATA$age_recode <- factor(NOLO_DATA$age_recode)
+NOLO_DATA$age_recode <- relevel(NOLO_DATA$age_recode, ref = "21+")
+
+#Race
+NOLO_DATA$race_recode <- dplyr::case_when(
+  NOLO_DATA$race == 1 ~ "White",
+  NOLO_DATA$race == 2 ~ "Black",
+  NOLO_DATA$race == 3 ~ "Hispanic",
+  NOLO_DATA$race %in% c(4, 5, 6, 7, 8) ~ "Other",
+  TRUE ~ NA_character_
+)
+NOLO_DATA$race_recode <- factor(NOLO_DATA$race_recode)
+NOLO_DATA$race_recode <- relevel(NOLO_DATA$race_recode, ref = "White")
+
+#Industry-sponsored offline alcohol advertisement
+NOLO_DATA$offline_ads_recode <- ifelse(NOLO_DATA$past_30_day_alc_ad_exposure_1 == 1, 0, 1)
+
+#Industry-sponsored offline alcohol advertisement
+NOLO_DATA$offline_nab_ads_recode <- ifelse(
+  NOLO_DATA$past_30_day_NAB_ad_exposure_1 == 1, 0, 1
+)
+
+# NAB-related content on social media
+NOLO_DATA$smm_nab_exposure_recode <- 
+  ifelse(NOLO_DATA$past_30_day_NAB_exposure_8 == 1, 0, 1)
+
+#Alcohol-related content on social media
+smm_items <- paste0("past_30_day_alc_exposure_", 1:10)
+
+NOLO_DATA$smm_exposure_recode <- ifelse(
+  rowSums(NOLO_DATA[, smm_items] == 1, na.rm = TRUE) > 0,
+  1, 0
+)
+
+#Social media use
+NOLO_DATA$social_media_use_recode <- ifelse(
+  rowSums(NOLO_DATA[, paste0("social_media_use_", 1:11)] == 1, na.rm = TRUE) > 0,
+  1, 0
+)
+
+#Daily social media use
+NOLO_DATA$social_media_daily_user_recode <- ifelse(
+  apply(NOLO_DATA[, paste0("social_media_use_freq_", letters[1:11])], 1,
+        function(x) any(x == 5, na.rm = TRUE)),
+  1, 0
+)
+
+#Lifetime alcohol use
+NOLO_DATA$lifetime_alcohol <- ifelse(NOLO_DATA$lifetime_alc == 1, 1, 0)
+
+#Past 30-day alcohol use
+NOLO_DATA$past30_alcohol <- ifelse(NOLO_DATA$past_30_days == 9, NA, NOLO_DATA$past_30_days)
+
+#Past 30-day binge drinking
+NOLO_DATA$past30_binge <- ifelse(NOLO_DATA$past_30_days_binge == 9, NA, NOLO_DATA$past_30_days_binge)
+```
+```{r Influencer credibility score}
+# Traits used in the YouGov file
+traits <- c("honesty", "trust", "informed", "intelligence", "attractiveness", "popularity")
+
+# Build variable names for treatment and control videos
+treatment_items <- as.vector(sapply(1:14, function(i) {
+  paste0("treatment_video_", i, "_perception_", traits)
+}))
+
+control_items <- as.vector(sapply(1:14, function(i) {
+  paste0("control_video_", i, "_perception_", traits)
+}))
+
+# Recode 999 as NA
+NOLO_DATA[treatment_items] <- lapply(NOLO_DATA[treatment_items], function(x) ifelse(x == 999, NA, x))
+NOLO_DATA[control_items]   <- lapply(NOLO_DATA[control_items], function(x) ifelse(x == 999, NA, x))
+
+# Initialize
+NOLO_DATA$influencer_credibility_score <- NA
+
+# Assign row mean based on group
+NOLO_DATA$influencer_credibility_score[NOLO_DATA$treatment_group == "Treatment"] <-
+  rowMeans(
+    NOLO_DATA[NOLO_DATA$treatment_group == "Treatment", treatment_items],
+    na.rm = TRUE
+  )
+
+NOLO_DATA$influencer_credibility_score[NOLO_DATA$treatment_group == "Control"] <-
+  rowMeans(
+    NOLO_DATA[NOLO_DATA$treatment_group == "Control", control_items],
+    na.rm = TRUE
+  )
+
+# Optional binary version (same cutoff as before)
+NOLO_DATA$influencer_credibility_score_binary <- ifelse(
+  NOLO_DATA$influencer_credibility_score >= 4, 1, 0
+)
+
+
+# Cronbach's alpha for influencer credibility items
+traits <- c("honesty", "trust", "informed", "intelligence", "attractiveness", "popularity")
+
+treatment_items <- as.vector(sapply(1:14, function(i) {
+  paste0("treatment_video_", i, "_perception_", traits)
+}))
+
+control_items <- as.vector(sapply(1:14, function(i) {
+  paste0("control_video_", i, "_perception_", traits)
+}))
+
+# Recode 999 to NA if applicable
+NOLO_DATA[treatment_items] <- lapply(NOLO_DATA[treatment_items], function(x) ifelse(x == 999, NA, x))
+NOLO_DATA[control_items]   <- lapply(NOLO_DATA[control_items], function(x) ifelse(x == 999, NA, x))
+
+treatment_data <- NOLO_DATA[treatment_items]
+control_data   <- NOLO_DATA[control_items]
+
+alpha_treatment <- psych::alpha(treatment_data, check.keys = TRUE)
+alpha_control   <- psych::alpha(control_data, check.keys = TRUE)
+
+alpha_treatment$total$raw_alpha
+alpha_control$total$raw_alpha
+```
+
+#Weighted Demographics and Covariates
+```{r Demographics}
+#Function to compute weighted + unweighted summary
+get_weighted_table <- function(data, var, weight_var = "weight") {
+  total_weight <- sum(data[[weight_var]], na.rm = TRUE)
+  
+  out <- data %>%
+    filter(!is.na(.data[[var]])) %>% 
+    group_by(Category = as.character(.data[[var]])) %>% 
+    summarise(
+      Unweighted_n = n(),
+      Unweighted_pct = round(100 * n() / nrow(data), 1),
+      Weighted_n = round(sum(.data[[weight_var]], na.rm = TRUE)),
+      Weighted_pct = round(100 * sum(.data[[weight_var]], na.rm = TRUE) / total_weight, 1),
+      .groups = "drop"
+    ) %>%
+    mutate(Variable = var) %>%
+    select(Variable, Category, Unweighted_n, Unweighted_pct, Weighted_n, Weighted_pct)
+  
+  return(out)
+}
+
+#Variables to summarize
+vars <- c("gender_recode",
+          "race_recode",
+          "age_recode",
+          "social_media_daily_user_recode",
+          "offline_ads_recode",
+          "offline_nab_ads_recode",
+          "smm_exposure_recode",
+          "smm_nab_exposure_recode" ,
+          "lifetime_alcohol",
+          "lifetime_NAB_use_recode",
+          "influencer_credibility_score_binary")
+
+#Combine all summaries
+weighted_tables <- lapply(vars, function(v) get_weighted_table(NOLO_DATA, v))
+table1_all <- bind_rows(weighted_tables)
+
+#View
+View(table1_all)
+write.xlsx(
+  table1_all,
+  file = "Table1_Demographics.xlsx",
+  sheetName = "Table 1",
+  overwrite = TRUE
+)
+```
+```{r Weighted age for birth year}
+# Define survey design
+des <- svydesign(
+  ids = ~1,
+  weights = ~weight,
+  data = NOLO_DATA
+)
+
+# Weighted mean age
+mean_age <- svymean(~age, des, na.rm = TRUE)
+
+# Weighted SD age (sqrt of weighted variance)
+sd_age <- sqrt(as.numeric(svyvar(~age, des, na.rm = TRUE)))
+
+# Print results
+mean_age
+sd_age
+
+mean(NOLO_DATA$age)
+sd(NOLO_DATA$age)
+```
+
+#Regression Models - Desire to drink alcohol 
+```{r Desire to drink alc}
+# Regression Model
+model1 <- polr(desire_drink_alc_ord ~ treatment_group + 
+                gender_recode + age_recode + race_recode +
+                offline_ads_recode + offline_nab_ads_recode +
+                smm_exposure_recode + smm_nab_exposure_recode +
+                social_media_daily_user_recode +
+                lifetime_alcohol + lifetime_NAB_use_recode,
+  data = NOLO_DATA,
+  Hess = TRUE,
+  weights = weight
+)
+
+# Summary and p-values
+ctable1 <- coef(summary(model1))
+p_vals1 <- pnorm(abs(ctable1[, "t value"]), lower.tail = FALSE) * 2
+ctable1 <- cbind(ctable1, "p value" = round(p_vals1, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs1 <- exp(coef(model1))
+CIs1 <- exp(confint(model1))
+results1 <- data.frame(
+  OR = round(ORs1, 2),
+  CI_lower = round(CIs1[, 1], 2),
+  CI_upper = round(CIs1[, 2], 2)
+)
+
+# Combine OR + CI into single string for easier reporting
+results1$OR_95CI <- paste0(results1$OR, " [", results1$CI_lower, ", ", results1$CI_upper, "]")
+
+# Print table
+print(results1)
+```
+```{r Desire to drink alc X influencer credibility}
+# Regression Model
+model2 <- polr(desire_drink_alc_ord~ treatment_group *
+              influencer_credibility_score_binary +
+              gender_recode + age_recode + race_recode +
+              offline_ads_recode + offline_nab_ads_recode +
+              smm_exposure_recode + smm_nab_exposure_recode +
+              social_media_daily_user_recode + 
+              lifetime_alcohol + lifetime_NAB_use_recode,
+              data = NOLO_DATA,
+              Hess = TRUE,
+              weights = weight
+              )
+
+# Summary and p-values
+ctable2 <- coef(summary(model2))
+p_vals2 <- pnorm(abs(ctable2[, "t value"]), lower.tail = FALSE) * 2
+ctable2 <- cbind(ctable2, "p value" = round(p_vals2, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs2 <- exp(coef(model2))
+CIs2 <- exp(confint(model2))  
+results2 <- data.frame(
+  OR = round(ORs2, 2),
+  CI_lower = round(CIs2[, 1], 2),
+  CI_upper = round(CIs2[, 2], 2)
+)
+
+# Combine OR + CI into a single formatted column
+results2$OR_95CI <- paste0(results2$OR, " [", results2$CI_lower, ", ", results2$CI_upper, "]")
+
+# Print final results
+print(results2)
+```
+
+#Regression Models - Desire to NABs
+```{r Desire to drink nab}
+# Regression Model
+model3 <- polr(desire_drink_NABs_ord ~ 
+               treatment_group + 
+               gender_recode + age_recode + race_recode +
+               offline_ads_recode + offline_nab_ads_recode +
+               smm_exposure_recode + smm_nab_exposure_recode +
+               social_media_daily_user_recode + 
+               lifetime_alcohol + lifetime_NAB_use_recode,
+  data = NOLO_DATA,
+  Hess = TRUE,
+  weights = weight
+)
+
+# Summary and p-values
+ctable3 <- coef(summary(model3))
+p_vals3 <- pnorm(abs(ctable3[, "t value"]), lower.tail = FALSE) * 2
+ctable3 <- cbind(ctable3, "p value" = round(p_vals1, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs3 <- exp(coef(model3))
+CIs3 <- exp(confint(model3))  # uses profile likelihood by default
+results3 <- data.frame(
+  OR = round(ORs3, 2),
+  CI_lower = round(CIs3[, 1], 2),
+  CI_upper = round(CIs3[, 2], 2)
+)
+
+# Combine OR + CI into single string for easier reporting
+results3$OR_95CI <- paste0(results3$OR, " [", results3$CI_lower, ", ", results3$CI_upper, "]")
+
+# Print table
+print(results3)
+```
+```{r Desire to drink nab X influencer credibility}
+# Regression Model
+model4 <- polr(desire_drink_NABs_ord~ treatment_group *
+              influencer_credibility_score_binary +
+              gender_recode + age_recode + race_recode +
+              offline_ads_recode + offline_nab_ads_recode +
+              smm_exposure_recode + smm_nab_exposure_recode +
+              social_media_daily_user_recode + 
+              lifetime_alcohol + lifetime_NAB_use_recode,
+              data = NOLO_DATA,
+              Hess = TRUE,
+              weights = weight
+              )
+
+# Summary and p-values
+ctable4 <- coef(summary(model4))
+p_vals4 <- pnorm(abs(ctable4[, "t value"]), lower.tail = FALSE) * 2
+ctable4 <- cbind(ctable4, "p value" = round(p_vals4, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs4 <- exp(coef(model4))
+CIs4 <- exp(confint(model4))  
+results4 <- data.frame(
+  OR = round(ORs4, 2),
+  CI_lower = round(CIs4[, 1], 2),
+  CI_upper = round(CIs4[, 2], 2)
+)
+
+# Combine OR + CI into a single formatted column
+results4$OR_95CI <- paste0(results4$OR, " [", results4$CI_lower, ", ", results4$CI_upper, "]")
+
+# Print final results
+print(results4)
+```
+
+#Sensitivity Analyses
+```{r Zhang and Yu analysis-alcohol}
+# Desire to drink alcohol
+NOLO_DATA$desire_binary <- ifelse(NOLO_DATA$desire_drink_alc_ord %in% c(4, 5), 1, 0)
+
+# Fit weighted logistic regression model
+model_bin <- glm(desire_binary ~ treatment_group + 
+                 gender_recode + age_recode + race_recode +
+                 offline_ads_recode + offline_nab_ads_recode +
+                 smm_exposure_recode + smm_nab_exposure_recode +
+                 social_media_daily_user_recode +
+                 lifetime_alcohol + lifetime_NAB_use_recode,
+                 data = NOLO_DATA,
+                 family = binomial(),
+                 weights = weight)
+
+summary(model_bin)
+
+# Extract adjusted odds ratio for treatment
+OR <- exp(coef(model_bin)["treatment_groupTreatment"])
+
+# Weighted baseline risk (control group)
+baseline <- with(
+  subset(NOLO_DATA, treatment_group == "Control"),
+  weighted.mean(desire_binary, w = weight, na.rm = TRUE)
+)
+
+# Convert OR to RR (Zhang & Yu, 1998)
+RR <- OR / ((1 - baseline) + (baseline * OR))
+
+OR
+RR
+baseline
+
+
+```
+```{r Zhang and Yu analysis-NAB}
+# Desire to drink nab
+NOLO_DATA$desire_binary_nab <- ifelse(NOLO_DATA$desire_drink_NABs_ord %in% c(4, 5), 1, 0)
+
+# Fit weighted logistic regression model
+model_bin <- glm(desire_binary_nab ~ treatment_group + 
+                 gender_recode + age_recode + race_recode +
+                 offline_ads_recode + offline_nab_ads_recode +
+                 smm_exposure_recode + smm_nab_exposure_recode +
+                 social_media_daily_user_recode +
+                 lifetime_alcohol + lifetime_NAB_use_recode,
+                 data = NOLO_DATA,
+                 family = binomial(),
+                 weights = weight)
+
+summary(model_bin)
+
+# Extract adjusted odds ratio for treatment
+OR <- exp(coef(model_bin)["treatment_groupTreatment"])
+
+# Weighted baseline risk (control group)
+baseline <- with(
+  subset(NOLO_DATA, treatment_group == "Control"),
+  weighted.mean(desire_binary_nab, w = weight, na.rm = TRUE)
+)
+
+# Convert OR to RR (Zhang & Yu, 1998)
+RR <- OR / ((1 - baseline) + (baseline * OR))
+
+OR
+RR
+baseline
+
+
+```
+```{r Proportional odds assumptions}
+#Proportional odds assumptions - alc
+po_test <- brant(model1)
+print(po_test)
+
+#Proportional odds assumptions - NAB
+po_test <- brant(model3)
+print(po_test)
+```
+
+#Null Models
+```{r Expectancies}
+#Positive expectancy (binary)
+model_pos_bin <- glm(positive_expectancy_binary_score ~
+                     treatment_group +
+                     gender_recode + age_recode + race_recode +
+                     offline_ads_recode + offline_nab_ads_recode +
+                     smm_exposure_recode + smm_nab_exposure_recode +
+                     social_media_daily_user_recode + 
+                     lifetime_alcohol + lifetime_NAB_use_recode,
+                     data = NOLO_DATA,
+                     family = binomial,
+                     weights = weight)
+
+#Negative expectancy (binary)
+model_neg_bin <- glm(negative_expectancy_binary_score ~
+                     treatment_group +
+                     gender_recode + age_recode + race_recode +
+                     offline_ads_recode + offline_nab_ads_recode +
+                     smm_exposure_recode + smm_nab_exposure_recode +
+                     social_media_daily_user_recode + 
+                     lifetime_alcohol + lifetime_NAB_use_recode,
+                     data = NOLO_DATA,
+                     family = binomial,
+                     weights = weight)
+
+#Odds Ratios + 95% CIs
+exp(cbind(OR = coef(model_pos_bin), confint(model_pos_bin)))
+exp(cbind(OR = coef(model_neg_bin), confint(model_neg_bin)))
+```
+```{r Susceptibility alcohol naive}
+#Alcohol-naïve subset
+NOLO_alc_naive <- NOLO_DATA[NOLO_DATA$lifetime_alc == 2, ]
+
+model_susceptibility_alc_naive <- glm(susceptibility_recode ~                                        treatment_group +
+                                  gender_recode + age_recode +
+                                  race_recode +
+                                  offline_ads_recode +
+                                  offline_nab_ads_recode +
+                                  smm_nab_exposure_recode +
+                                  smm_exposure_recode +
+                                  social_media_daily_user_recode +
+                                  lifetime_NAB_use_recode,
+                                  data = NOLO_alc_naive,
+                                  family = binomial,
+                                  weights = weight)
+
+exp(cbind(
+  OR = coef(model_susceptibility_alc_naive),
+  confint(model_susceptibility_alc_naive)
+))
+
+
+```
+```{r Susceptibility nonalcohol naive}
+#Nonnaive dataset
+NOLO_alc_non_naive <- NOLO_DATA[NOLO_DATA$lifetime_alc == 1, ]
+
+
+model_susceptibility_alc_non_naive <- glm(susceptibility_recode ~
+                                      treatment_group +
+                                      gender_recode + age_recode +
+                                      race_recode +
+                                      offline_ads_recode +
+                                      offline_nab_ads_recode +
+                                      smm_nab_exposure_recode +
+                                      smm_exposure_recode +
+                                      social_media_daily_user_recode +
+                                      lifetime_NAB_use_recode,
+                                      data = NOLO_alc_non_naive,
+                                      family = binomial,
+                                      weights = weight)
+
+exp(cbind(
+  OR = coef(model_susceptibility_alc_non_naive),
+  confint(model_susceptibility_alc_non_naive)
+))
+
+## NOTE:The outcome showed minimal variability among lifetime users (~94% susceptible),
+# leading to model non-convergence. 
+```
+```{r Desire to drink alc X past 30 days}
+# Regression Model
+model3 <- polr(desire_drink_alc_ord~ 
+               treatment_group * past30_alcohol +
+               gender_recode + age_recode + race_recode +
+               offline_ads_recode + offline_nab_ads_recode +
+               smm_exposure_recode + smm_nab_exposure_recode +
+               social_media_daily_user_recode + 
+               lifetime_alcohol + lifetime_NAB_use_recode,
+               data = NOLO_DATA,
+               Hess = TRUE,
+               weights = weight
+               )
+
+# Summary and p-values
+ctable3 <- coef(summary(model3))
+p_vals3 <- pnorm(abs(ctable3[, "t value"]), lower.tail = FALSE) * 2
+ctable3 <- cbind(ctable3, "p value" = round(p_vals3, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs3 <- exp(coef(model3))
+CIs3 <- exp(confint(model3))  
+results3 <- data.frame(
+  OR = round(ORs3, 2),
+  CI_lower = round(CIs3[, 1], 2),
+  CI_upper = round(CIs3[, 2], 2)
+)
+
+# Combine OR + CI into a single formatted column
+results3$OR_95CI <- paste0(results3$OR, " [", results3$CI_lower, ", ", results3$CI_upper, "]")
+
+# Print final results
+print(results3)
+```
+```{r Desire to drink alc X binge drinking}
+# Regression Model
+model4 <- polr(desire_drink_alc_ord~ 
+               treatment_group * past30_binge +
+               gender_recode + age_recode + race_recode +
+               offline_ads_recode + offline_nab_ads_recode +
+               smm_exposure_recode + smm_nab_exposure_recode +
+               social_media_daily_user_recode + 
+               lifetime_alcohol + lifetime_NAB_use_recode,
+               data = NOLO_DATA,
+               Hess = TRUE,
+               weights = weight
+               )
+
+# Summary and p-values
+ctable4 <- coef(summary(model4))
+p_vals4 <- pnorm(abs(ctable4[, "t value"]), lower.tail = FALSE) * 2
+ctable4 <- cbind(ctable4, "p value" = round(p_vals4, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs4 <- exp(coef(model4))
+CIs4 <- exp(confint(model4))  
+results4 <- data.frame(
+  OR = round(ORs4, 2),
+  CI_lower = round(CIs4[, 1], 2),
+  CI_upper = round(CIs4[, 2], 2)
+)
+
+# Combine OR + CI into a single formatted column
+results4$OR_95CI <- paste0(results4$OR, " [", results4$CI_lower, ", ", results4$CI_upper, "]")
+
+# Print final results
+print(results4)
+```
+```{r Desire to drink nab X past 30 days}
+# Regression Model
+model3 <- polr(desire_drink_NABs_ord~ 
+               treatment_group * past30_alcohol +
+               gender_recode + age_recode + race_recode +
+               offline_ads_recode + offline_nab_ads_recode +
+               smm_exposure_recode + smm_nab_exposure_recode +
+               social_media_daily_user_recode + 
+               lifetime_alcohol + lifetime_NAB_use_recode,
+               data = NOLO_DATA,
+               Hess = TRUE,
+               weights = weight
+               )
+
+# Summary and p-values
+ctable3 <- coef(summary(model3))
+p_vals3 <- pnorm(abs(ctable3[, "t value"]), lower.tail = FALSE) * 2
+ctable3 <- cbind(ctable3, "p value" = round(p_vals3, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs3 <- exp(coef(model3))
+CIs3 <- exp(confint(model3))  
+results3 <- data.frame(
+  OR = round(ORs3, 2),
+  CI_lower = round(CIs3[, 1], 2),
+  CI_upper = round(CIs3[, 2], 2)
+)
+
+# Combine OR + CI into a single formatted column
+results3$OR_95CI <- paste0(results3$OR, " [", results3$CI_lower, ", ", results3$CI_upper, "]")
+
+# Print final results
+print(results3)
+```
+```{r Desire to drink nab X binge drinking}
+# Regression Model
+model4 <- polr(desire_drink_NABs_ord~ 
+               treatment_group * past30_binge +
+               gender_recode + age_recode + race_recode +
+               offline_ads_recode + offline_nab_ads_recode +
+               smm_exposure_recode + smm_nab_exposure_recode +
+               social_media_daily_user_recode + 
+               lifetime_alcohol + lifetime_NAB_use_recode,
+               data = NOLO_DATA,
+               Hess = TRUE,
+               weights = weight
+               )
+
+# Summary and p-values
+ctable4 <- coef(summary(model4))
+p_vals4 <- pnorm(abs(ctable4[, "t value"]), lower.tail = FALSE) * 2
+ctable4 <- cbind(ctable4, "p value" = round(p_vals4, 4))
+
+# Odds Ratios and 95% Confidence Intervals
+ORs4 <- exp(coef(model4))
+CIs4 <- exp(confint(model4))  
+results4 <- data.frame(
+  OR = round(ORs4, 2),
+  CI_lower = round(CIs4[, 1], 2),
+  CI_upper = round(CIs4[, 2], 2)
+)
+
+# Combine OR + CI into a single formatted column
+results4$OR_95CI <- paste0(results4$OR, " [", results4$CI_lower, ", ", results4$CI_upper, "]")
+
+# Print final results
+print(results4)
+```
+
+
+
+
+
+
+
+
+
+
+
